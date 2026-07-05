@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>美容室 予約システム（松プラン完全版）</title>
+  
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
+  
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 10px; background-color: #f9f9f9; color: #333; }
+    .info-box { background: white; padding: 12px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); font-size: 14px; }
+    .select-section { background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .select-group { margin-bottom: 12px; }
+    .select-group label { display: block; font-size: 12px; font-weight: bold; margin-bottom: 5px; color: #666; }
+    .form-select { display: block; width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; background-color: #fff; }
+    #calendar { background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; display: none; }
+    .fc-day-sun .fc-col-header-cell-cushion { color: red; }
+    .fc-day-sat .fc-col-header-cell-cushion { color: blue; }
+    .fc-event { cursor: pointer; }
+    .selection-box { background: #e9f7ef; border: 1px solid #28a745; padding: 15px; border-radius: 8px; text-align: center; display: none; margin-top: 15px; }
+    .selection-text { font-size: 16px; font-weight: bold; margin-bottom: 10px; color: #1e7e34; }
+    .btn { display: block; width: 100%; padding: 15px; background: #28a745; color: white; text-align: center; border-radius: 5px; font-weight: bold; border: none; cursor: pointer; font-size: 16px; }
+  </style>
+</head>
+<body>
+
+  <div class="info-box">
+    <strong>ようこそ、<span id="userName" style="color:#008080;">読み込み中...</span> 様</strong>
+  </div>
+
+  <div class="select-section">
+    <div class="select-group">
+      <label>1. 店舗を選択</label>
+      <select id="shopSelect" class="form-select" onchange="filterStaff(); checkSelections();">
+        <option value="">-- 店舗を選んでください --</option>
+      </select>
+    </div>
+    <div class="select-group">
+      <label>2. スタッフを選択</label>
+      <select id="staffSelect" class="form-select" onchange="checkSelections()">
+        <option value="">-- スタッフを選んでください --</option>
+      </select>
+    </div>
+    <div class="select-group">
+      <label>3. メニューを選択</label>
+      <select id="menuSelect" class="form-select" onchange="checkSelections()">
+        <option value="">-- メニューを選んでください --</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="calendar"></div>
+
+  <div id="selectionBox" class="selection-box">
+    <div id="selectionText" class="selection-text"></div>
+    <button class="btn" onclick="submitReservation()">この内容で予約を確定する</button>
+  </div>
+
+  <script>
+    let userProfile = null;
+    let selectedSlot = null;
+    let calendar = null;
+    let masterMenus = [];
+    let masterStaffs = []; 
+    
+    // 🚨ここに最新のGASウェブアプリURLが入っているか必ず確認してください！
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbzEWNrNBDNaYKofiBPMzixJ1nY--JPJtaH2EOqjKAwLqjN8Y4syGcDh3T79Jg34_ycBdA/exec";
+
+    liff.init({ liffId: "2010605097-p2ZIk7qb" })
+      .then(() => {
+        if (!liff.isLoggedIn()) {
+          liff.login();
+        } else {
+          liff.getProfile().then(profile => {
+            userProfile = profile;
+            document.getElementById("userName").innerText = profile.displayName;
+            fetchMasterData(); 
+          });
+        }
+      })
+      .catch((err) => { console.error("LIFF初期化エラー", err); });
+
+    function fetchMasterData() {
+      fetch(GAS_URL + "?type=init") 
+        .then(response => response.json())
+        .then(data => {
+          masterMenus = data.menus;
+          masterStaffs = data.staffs;
+          const shopSelect = document.getElementById("shopSelect");
+          data.shops.forEach(shop => {
+            let opt = document.createElement("option");
+            opt.value = shop.id;
+            opt.textContent = shop.name;
+            shopSelect.appendChild(opt);
+          });
+          const menuSelect = document.getElementById("menuSelect");
+          data.menus.forEach(menu => {
+            let opt = document.createElement("option");
+            opt.value = menu.id;
+            opt.textContent = menu.name;
+            menuSelect.appendChild(opt);
+          });
+          filterStaff();
+        });
+    }
+
+    function filterStaff() {
+      const shopId = document.getElementById("shopSelect").value;
+      const staffSelect = document.getElementById("staffSelect");
+      staffSelect.innerHTML = '<option value="">-- スタッフを選んでください --</option>';
+      masterStaffs.forEach(staff => {
+        if (!shopId || staff.shopId === shopId) {
+          let opt = document.createElement("option");
+          opt.value = staff.id;         
+          opt.textContent = staff.name; 
+          staffSelect.appendChild(opt);
+        }
+      });
+    }
+
+    function checkSelections() {
+      const shop = document.getElementById("shopSelect").value;
+      const staff = document.getElementById("staffSelect").value; 
+      const menu = document.getElementById("menuSelect").value;
+      const calendarEl = document.getElementById('calendar');
+
+      if (shop && staff && menu) {
+        const selectedMenu = masterMenus.find(m => m.id === menu);
+        const duration = selectedMenu ? selectedMenu.duration : 60;
+        fetch(GAS_URL + "?staffId=" + staff + "&duration=" + duration)
+          .then(res => res.json())
+          .then(events => {
+            calendarEl.style.width = "100%";
+            calendarEl.style.display = 'block';
+            if (!calendar) {
+              initCalendar(events); 
+            } else {
+              calendar.removeAllEvents(); 
+              calendar.addEventSource(events); 
+              calendar.render();
+            }
+          });
+      } else {
+        calendarEl.style.display = 'none';
+        document.getElementById("selectionBox").style.display = 'none';
+      }
+    }
+
+    function initCalendar(initialEvents) {
+      const calendarEl = document.getElementById('calendar');
+      const now = new Date();
+      const updatedEvents = initialEvents.map(event => {
+        if (new Date(event.start) < now) {
+          return { ...event, title: '× 予約不可', backgroundColor: '#cccccc', borderColor: '#cccccc', editable: false };
+        }
+        return event;
+      });
+
+      calendar = new FullCalendar.Calendar(calendarEl, {
+        timeZone: 'local',
+        initialView: 'timeGridThreeDay',
+        views: { timeGridThreeDay: { type: 'timeGrid', duration: { days: 3 }, buttonText: '3日間' } },
+        locale: 'ja',
+        allDaySlot: false,
+        slotMinTime: '09:00:00',
+        slotMaxTime: '19:00:00',
+        height: 'auto',
+        headerToolbar: { left: 'prev', center: 'title', right: 'next' },
+        events: updatedEvents, 
+        
+        eventClick: function(info) {
+          if (info.event.title.includes('×') || info.event.title.includes('予約不可')) {
+            alert('申し訳ありません。この枠はすでに予約が埋まっているか、過去の時間です。別の時間をお選びください。');
+            return; 
+          }
+          selectedSlot = info.event;
+          const start = new Date(selectedSlot.start);
+          const dateStr = (start.getMonth() + 1) + '月' + start.getDate() + '日';
+          const timeStr = start.getHours() + ':' + String(start.getMinutes()).padStart(2, '0');
+          document.getElementById("selectionText").innerText = '選択中：' + dateStr + ' ' + timeStr + '〜';
+          document.getElementById("selectionBox").style.display = 'block';
+          window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        }
+      });
+      calendar.render();
+    }
+
+    function submitReservation() {
+      if (!userProfile || !selectedSlot) return;
+      const start = new Date(selectedSlot.start);
+      const end = new Date(selectedSlot.end);
+      // 日付を日本の標準フォーマット（yyyy/MM/dd HH:mm）で組み立てて送信
+      const startTimeStr = start.getFullYear() + '/' + String(start.getMonth() + 1).padStart(2, '0') + '/' + String(start.getDate()).padStart(2, '0') + ' ' + String(start.getHours()).padStart(2, '0') + ':' + String(start.getMinutes()).padStart(2, '0');
+      const endTimeStr = end.getFullYear() + '/' + String(end.getMonth() + 1).padStart(2, '0') + '/' + String(end.getDate()).padStart(2, '0') + ' ' + String(end.getHours()).padStart(2, '0') + ':' + String(end.getMinutes()).padStart(2, '0');
+
+      const shopSelect = document.getElementById("shopSelect");
+      const staffSelect = document.getElementById("staffSelect");
+      const menuSelect = document.getElementById("menuSelect");
+
+      const reservationData = {
+        action: "reserve", // 💡GASに予約データであることを伝える合言葉
+        shopId: shopSelect.options[shopSelect.selectedIndex].text,
+        staffId: staffSelect.options[staffSelect.selectedIndex].text, 
+        startTime: startTimeStr,
+        endTime: endTimeStr,
+        name: userProfile.displayName,
+        lineUserId: userProfile.userId,
+        menu: menuSelect.options[menuSelect.selectedIndex].text
+      };
+
+      fetch(GAS_URL, { method: "POST", body: JSON.stringify(reservationData) })
+      .then(response => response.json())
+      .then(data => {
+        if (data.status === "success") {
+          alert("ご予約が完了しました！");
+          liff.closeWindow(); 
+        } else {
+          alert("予約に失敗しました。");
+        }
+      })
+      .catch(error => { alert("通信エラーが発生しました。"); });
+    }
+  </script>
+</body>
+</html>
